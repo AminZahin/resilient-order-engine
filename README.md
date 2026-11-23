@@ -1,68 +1,68 @@
 # Resilient Order & Webhook Processing Engine
 
-> **Live Interactive Architecture Simulator (Before vs. After):**  
-> **[Launch Live Demo → resilient-order-engine]([https://USERNAME_AWAK.github.io/resilient-order-engine/](https://aminzahin.github.io/resilient-order-engine/))**  
-> *Toggle between a naive synchronous implementation and this resilient engine to see how it handles duplicate payment retries, third-party webhook outages, and 500k-row CSV exports.*
+> **Interactive Simulator (Naive vs. Resilient):**  
+> **[Launch Live Demo → resilient-order-engine](https://aminzahin.github.io/resilient-order-engine/)**  
+> *Switch between a straightforward synchronous setup and this engine to see how it handles duplicate payment retries, flaky third-party webhooks, and 500k-row CSV exports.*
 
 ---
 
-## Why I Built This Project
+## Why I Built This
 
-Modern AI tools can scaffold basic CRUD endpoints in seconds—but production backend engineering is defined by what happens **when things go wrong**: network timeouts, duplicate client retries, traffic spikes, and memory-intensive exports.
+Scaffolding CRUD endpoints is easy—especially with modern AI tools. Real backend work starts when things break in production: flaky mobile networks, double-clicks, sudden traffic spikes, and heavy exports that blow past memory limits.
 
-I built this project to demonstrate the core Node.js and distributed-systems engineering fundamentals required to keep real-world services reliable under load:
+I built this project to put core Node.js and reliability patterns in one place:
 
-* **Strict Runtime Validation (`Zod`):** Enforces type safety across external boundaries (`req.body`, headers, environment variables).
-* **Idempotency Keys (`Redis`):** Intercepts duplicate network retries so customers are never double-charged.
-* **Atomic Transactions (`PostgreSQL`):** Deducts inventory and commits orders inside a single ACID transaction to prevent race conditions.
-* **Async Background Workers (`BullMQ`):** Decouples slow outbound webhooks from the HTTP request lifecycle, keeping API latency under 20ms.
-* **Fault-Tolerant Delivery (`Exponential Backoff + DLQ`):** Automatically retries failed partner webhooks and routes persistently failing events to a Dead-Letter Queue for safe replay.
-* **Memory-Safe Reporting (`Node.js Streams`):** Pipes PostgreSQL cursors directly to HTTP responses, keeping RAM usage flat (~40MB) even when exporting 500,000+ rows.
-* **Zero-Downtime Shutdown (`SIGTERM / SIGINT`):** Drains active HTTP connections and finishes in-flight worker jobs before process exit.
+- **Runtime Validation (`Zod`):** Catches bad inputs early at external boundaries (`req.body`, headers, and environment variables).
+- **Idempotency Keys (`Redis`):** Stops duplicate retries from creating double orders or double charges.
+- **Atomic Transactions (`PostgreSQL`):** Checks stock, deducts inventory, and creates the order in a single ACID transaction so concurrent requests don't oversell items.
+- **Background Jobs (`BullMQ`):** Moves slow outbound webhook calls off the request path, keeping API responses under 20ms.
+- **Retries & Dead-Letter Queue (`Exponential Backoff + DLQ`):** Retries failing partner webhooks automatically and parks stubborn failures in a DLQ so they can be inspected and replayed later.
+- **Streaming Exports (`Node.js Streams`):** Streams rows from PostgreSQL straight to the HTTP response, keeping memory flat around ~40MB even on 500,000+ rows.
+- **Graceful Shutdown (`SIGTERM / SIGINT`):** Finishes open HTTP requests and in-flight worker jobs before the process exits on deploys or restarts.
 
 ---
 
-## Architecture Comparison: Naive vs. Resilient
+## Naive vs. Resilient at a Glance
 
-| Real-World Scenario | ❌ Typical AI / Junior App | ✅ This Production Engine |
+| Scenario | Naive Setup | Resilient Engine |
 | :--- | :--- | :--- |
-| **User clicks "Pay" twice on bad Wi-Fi** | User gets charged twice; duplicate orders created. | **Redis Idempotency Key** blocks the retry and returns the cached response. |
-| **API Response Time** | 3–10 seconds (blocks while waiting for partner webhooks). | **< 20ms (`202 Accepted`)**; slow work is offloaded to **BullMQ**. |
-| **Partner Webhook Server Goes Down** | HTTP request fails (`500`) and webhook payload is lost. | **Exponential backoff retries** (2s → 4s → 8s) + **Dead-Letter Queue (DLQ)**. |
-| **Exporting 500,000 Orders to CSV** | Loads all rows into an array → **Out-Of-Memory (OOM) Crash**. | **Node.js Readable Streams** maintain flat ~40MB memory usage. |
-| **Deploying New Code** | Active database writes are cut off mid-flight. | **Graceful Shutdown (`SIGTERM`)** completes active jobs before exiting. |
+| **Double-tap on spotty Wi-Fi** | Can create duplicate orders or charge twice. | **Redis idempotency key** catches the retry and returns the saved response. |
+| **Checkout API latency** | Often 3–10s while waiting on external webhooks. | **Under 20ms (`202 Accepted`)**; webhooks run asynchronously in **BullMQ**. |
+| **Partner webhook endpoint is down** | Request fails (`500` or timeout) and the event is lost. | Retries with **exponential backoff** (2s → 4s → 8s), then moves to a **DLQ**. |
+| **500,000-row CSV export** | Buffers rows in memory and risks an **OOM crash**. | Streams data with **Node.js Readable Streams** (~40MB memory footprint). |
+| **Rolling out a new release** | In-flight writes or jobs can get cut off mid-run. | **Graceful shutdown (`SIGTERM`)** drains active work before exiting. |
 
 ---
 
-## Request Lifecycle (How It Works)
+## Request Lifecycle
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Client
-    participant API as Express API (Gatekeeper)
+    participant API as Express API
     participant Redis as Redis (Idempotency & Queue)
     participant DB as PostgreSQL (ACID)
     participant Worker as BullMQ Worker
     participant Partner as Partner Webhook
 
     Client->>API: POST /orders (Header: Idempotency-Key)
-    API->>Redis: Check if Idempotency-Key exists
-    alt Key Already Processed
-        Redis-->>API: Return cached order payload
-        API-->>Client: 200 OK (Duplicate prevented)
-    else New Request
-        API->>DB: BEGIN Transaction (Check & Deduct Stock + Insert Order)
+    API->>Redis: Check Idempotency-Key
+    alt Already processed
+        Redis-->>API: Return cached response
+        API-->>Client: 200 OK (Deduplicated)
+    else First attempt
+        API->>DB: BEGIN TX (Check & deduct stock + insert order)
         DB-->>API: COMMIT
-        API->>Redis: Cache response (24h TTL) & Enqueue Webhook Job
-        API-->>Client: 202 Accepted (< 20ms)
+        API->>Redis: Cache response (24h TTL) & enqueue webhook job
+        API-->>Client: 202 Accepted (less than 20ms)
     end
 
-    Worker->>Redis: Consume Webhook Job
-    Worker->>Partner: POST Webhook (Signed with HMAC-SHA256)
-    alt Partner Returns 500 / Timeout
-        Partner--xWorker: Delivery Failed
-        Note over Worker,Redis: Retry with Exponential Backoff (2s -> 4s -> 8s) -> Move to DLQ
-    else Partner Returns 200 OK
-        Partner-->>Worker: Acknowledged
+    Worker->>Redis: Pull webhook job
+    Worker->>Partner: POST webhook (HMAC-SHA256 signature)
+    alt 500 or timeout
+        Partner--xWorker: Delivery failed
+        Note over Worker,Redis: Retry with backoff (2s -> 4s -> 8s) -> DLQ
+    else 200 OK
+        Partner-->>Worker: Delivered
     end
