@@ -1,0 +1,1906 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Resilient Order & Webhook Engine — Interactive Architecture Simulator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            canvas: '#09090b',
+            surface: '#111114',
+            surfaceElevated: '#16161a',
+            borderSubtle: '#27272a',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #09090b;
+      color: #f4f4f5;
+      overflow-x: hidden;
+    }
+
+    /* Engineering dot/grid backdrop */
+    .bg-grid {
+      background-size: 28px 28px;
+      background-image:
+        linear-gradient(to right, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+    }
+
+    /* Node transition & active glow states */
+    .node-card {
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+                  border-color 0.25s ease,
+                  box-shadow 0.25s ease,
+                  opacity 0.25s ease;
+    }
+
+    .node-bypassed {
+      opacity: 0.36;
+      filter: grayscale(0.75);
+      border-style: dashed !important;
+      border-color: #3f3f46 !important;
+    }
+
+    .node-active-blue {
+      border-color: #3b82f6 !important;
+      box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.4), 0 0 28px -4px rgba(59, 130, 246, 0.45);
+      transform: translateY(-2px);
+    }
+
+    .node-active-emerald {
+      border-color: #10b981 !important;
+      box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.4), 0 0 28px -4px rgba(16, 185, 129, 0.45);
+      transform: translateY(-2px);
+    }
+
+    .node-active-amber {
+      border-color: #f59e0b !important;
+      box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.4), 0 0 28px -4px rgba(245, 158, 11, 0.45);
+      transform: translateY(-2px);
+    }
+
+    .node-active-rose {
+      border-color: #f43f5e !important;
+      box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.5), 0 0 30px -4px rgba(244, 63, 94, 0.55);
+      transform: translateY(-2px);
+    }
+
+    .node-active-purple {
+      border-color: #a855f7 !important;
+      box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.4), 0 0 28px -4px rgba(168, 85, 247, 0.45);
+      transform: translateY(-2px);
+    }
+
+    /* Error shake animation for crashes / double charges */
+    @keyframes errorShake {
+      0%, 100% { transform: translateX(0); }
+      20% { transform: translateX(-6px); }
+      40% { transform: translateX(6px); }
+      60% { transform: translateX(-4px); }
+      80% { transform: translateX(4px); }
+    }
+    .animate-shake {
+      animation: errorShake 0.42s cubic-bezier(.36,.07,.19,.97) both;
+    }
+
+    /* Floating status pill animation */
+    @keyframes pillPop {
+      0% { opacity: 0; transform: translate(-50%, 6px) scale(0.92); }
+      100% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+    }
+    .status-pill {
+      animation: pillPop 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    /* Animated SVG dashed connector lines */
+    .flow-line {
+      stroke-dasharray: 5 5;
+      animation: dashFlow 18s linear infinite;
+    }
+    @keyframes dashFlow {
+      to {
+        stroke-dashoffset: -180;
+      }
+    }
+
+    /* Glowing packet orb */
+    .packet {
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      border-radius: 9999px;
+      pointer-events: none;
+      z-index: 40;
+      transform: translate(-50%, -50%);
+      transition: opacity 0.15s ease;
+    }
+
+    /* Custom subtle scrollbars */
+    .custom-scroll::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scroll::-webkit-scrollbar-track {
+      background: #09090b;
+    }
+    .custom-scroll::-webkit-scrollbar-thumb {
+      background: #27272a;
+      border-radius: 3px;
+    }
+    .custom-scroll::-webkit-scrollbar-thumb:hover {
+      background: #3f3f46;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col bg-grid selection:bg-emerald-500/30">
+
+  <!-- ===================================================================== -->
+  <!-- 1. TOP HEADER & SEGMENTED BEFORE/AFTER MODE TOGGLE                    -->
+  <!-- ===================================================================== -->
+  <header class="border-b border-borderSubtle bg-surface/85 backdrop-blur-md sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex flex-col lg:flex-row items-center justify-between gap-3.5">
+      
+      <!-- Left: Brand & Story Framing -->
+      <div class="flex items-center gap-3 w-full lg:w-auto justify-between lg:justify-start">
+        <div class="flex items-center gap-3">
+          <div id="brand-icon" class="w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center shadow-lg shadow-emerald-500/20 transition-all duration-300">
+            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <h1 class="font-bold text-sm sm:text-base tracking-tight text-white">Resilient Order &amp; Webhook Engine</h1>
+              <span class="hidden xl:inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-zinc-800 text-zinc-300 border border-zinc-700">
+                docs/index.html
+              </span>
+            </div>
+            <p class="text-[11px] sm:text-xs text-zinc-400">Interactive Architecture Simulator — Why Production Engineering Matters Beyond AI Boilerplate</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Center: Prominent Segmented BEFORE vs AFTER Toggle -->
+      <div class="inline-flex p-1 rounded-xl bg-canvas border border-borderSubtle shadow-inner w-full sm:w-auto justify-center" role="group" aria-label="Architecture Mode Toggle">
+        <button
+          id="mode-btn-before"
+          onclick="setArchitectureMode('before')"
+          class="flex-1 sm:flex-initial px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 flex items-center justify-center gap-1.5 cursor-pointer text-zinc-400 hover:text-zinc-200"
+        >
+          <span>❌ BEFORE: Naive / AI Boilerplate</span>
+        </button>
+        <button
+          id="mode-btn-after"
+          onclick="setArchitectureMode('after')"
+          class="flex-1 sm:flex-initial px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 flex items-center justify-center gap-1.5 cursor-pointer bg-emerald-500/15 text-emerald-300 border border-emerald-500/40 shadow-sm"
+        >
+          <span>✅ AFTER: Resilient Production Engine</span>
+        </button>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- ===================================================================== -->
+  <!-- 2. DYNAMIC ARCHITECTURE INSIGHT BANNER                                -->
+  <!-- ===================================================================== -->
+  <section class="max-w-7xl mx-auto w-full px-4 sm:px-6 pt-4">
+    <div id="insight-banner" class="rounded-xl bg-emerald-950/25 border border-emerald-500/30 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 transition-colors duration-300">
+      <div class="flex items-start sm:items-center gap-3">
+        <span id="insight-badge" class="shrink-0 px-2.5 py-1 rounded-md text-[11px] font-mono font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+          SAFEGUARD • SCENARIO 01
+        </span>
+        <p id="insight-text" class="text-xs sm:text-sm text-zinc-200 leading-relaxed">
+          <!-- Populated dynamically by updateInsightBanner() -->
+        </p>
+      </div>
+      <span id="insight-tag" class="shrink-0 self-start sm:self-center text-[11px] font-mono text-emerald-400">
+        Non-Blocking Event Loop
+      </span>
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- 3. SCENARIO TABS + PRIMARY ACTION CONTROLS                            -->
+  <!-- ===================================================================== -->
+  <section class="max-w-7xl mx-auto w-full px-4 sm:px-6 pt-4 pb-2">
+    <div class="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3">
+      
+      <!-- 4 Scenario Tabs -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-2 flex-1">
+        <button onclick="selectScenario(1)" id="tab-scen-1" class="scenario-tab text-left px-3.5 py-2.5 rounded-xl bg-surfaceElevated border border-emerald-500/50 text-white transition-all cursor-pointer">
+          <div class="text-[10px] font-mono text-emerald-400 font-semibold">SCENARIO 01</div>
+          <div class="text-xs sm:text-sm font-semibold truncate">01 • Fast Checkout</div>
+        </button>
+
+        <button onclick="selectScenario(2)" id="tab-scen-2" class="scenario-tab text-left px-3.5 py-2.5 rounded-xl bg-surface border border-borderSubtle hover:border-zinc-600 text-zinc-300 transition-all cursor-pointer">
+          <div class="text-[10px] font-mono text-zinc-500 font-semibold">SCENARIO 02</div>
+          <div class="text-xs sm:text-sm font-semibold truncate">02 • Duplicate Retry</div>
+        </button>
+
+        <button onclick="selectScenario(3)" id="tab-scen-3" class="scenario-tab text-left px-3.5 py-2.5 rounded-xl bg-surface border border-borderSubtle hover:border-zinc-600 text-zinc-300 transition-all cursor-pointer">
+          <div class="text-[10px] font-mono text-zinc-500 font-semibold">SCENARIO 03</div>
+          <div class="text-xs sm:text-sm font-semibold truncate">03 • Partner Outage &amp; DLQ</div>
+        </button>
+
+        <button onclick="selectScenario(4)" id="tab-scen-4" class="scenario-tab text-left px-3.5 py-2.5 rounded-xl bg-surface border border-borderSubtle hover:border-zinc-600 text-zinc-300 transition-all cursor-pointer">
+          <div class="text-[10px] font-mono text-zinc-500 font-semibold">SCENARIO 04</div>
+          <div class="text-xs sm:text-sm font-semibold truncate">04 • 500k CSV Stream Export</div>
+        </button>
+      </div>
+
+      <!-- Action Buttons: Run Scenario, Replay DLQ Job, Reset -->
+      <div class="flex items-center gap-2.5 shrink-0">
+        <button
+          id="btn-run"
+          onclick="runCurrentScenario()"
+          class="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-xs sm:text-sm shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
+        >
+          <span>▶ Run Scenario</span>
+        </button>
+
+        <button
+          id="btn-replay-dlq"
+          onclick="replayDlqJob()"
+          disabled
+          title="Available when a failed job lands in the Dead-Letter Queue in Scenario 03 (AFTER mode)"
+          class="px-3.5 py-2.5 rounded-xl bg-surface border border-borderSubtle text-zinc-500 font-semibold text-xs sm:text-sm transition-all flex items-center justify-center gap-1.5 opacity-50 cursor-not-allowed"
+        >
+          <span>↻ Replay DLQ Job</span>
+        </button>
+
+        <button
+          id="btn-reset"
+          onclick="resetSimulator()"
+          class="px-3.5 py-2.5 rounded-xl bg-surface hover:bg-surfaceElevated text-zinc-300 font-medium text-xs sm:text-sm border border-borderSubtle transition-all cursor-pointer"
+        >
+          Reset
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- 4. REAL-TIME TELEMETRY & MEMORY GAUGE (4 METRIC CARDS)                -->
+  <!-- ===================================================================== -->
+  <section class="max-w-7xl mx-auto w-full px-4 sm:px-6 py-2">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      
+      <!-- Metric 1: API Response Time -->
+      <div class="rounded-xl bg-surface border border-borderSubtle p-3.5 flex flex-col justify-between">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] font-mono uppercase tracking-wider text-zinc-400">API Response Time</span>
+          <span id="metric-latency-badge" class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400">SLA &lt;50ms</span>
+        </div>
+        <div id="metric-latency" class="font-mono text-lg sm:text-xl font-bold text-emerald-400 mt-1.5">
+          14ms
+        </div>
+        <div id="metric-latency-sub" class="text-[11px] text-zinc-500 mt-0.5">HTTP 202 Accepted (Non-blocking)</div>
+      </div>
+
+      <!-- Metric 2: Orders Committed -->
+      <div class="rounded-xl bg-surface border border-borderSubtle p-3.5 flex flex-col justify-between">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] font-mono uppercase tracking-wider text-zinc-400">Orders Committed</span>
+          <span id="metric-orders-badge" class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400">ACID DB</span>
+        </div>
+        <div id="metric-orders" class="font-mono text-lg sm:text-xl font-bold text-white mt-1.5">
+          0 Orders ($0)
+        </div>
+        <div id="metric-orders-sub" class="text-[11px] text-zinc-500 mt-0.5">PostgreSQL transactional state</div>
+      </div>
+
+      <!-- Metric 3: Node.js Heap RAM + 1024MB OOM Marker -->
+      <div class="rounded-xl bg-surface border border-borderSubtle p-3.5 flex flex-col justify-between">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] font-mono uppercase tracking-wider text-zinc-400">Node.js Heap RAM</span>
+          <span class="text-[10px] font-mono text-rose-400">1024 MB OOM Limit</span>
+        </div>
+        <div class="flex items-baseline justify-between mt-1.5">
+          <span id="metric-ram" class="font-mono text-lg sm:text-xl font-bold text-blue-400">42 MB</span>
+          <span id="metric-ram-pct" class="font-mono text-[11px] text-zinc-400">4.1%</span>
+        </div>
+        <!-- Visual Progress Bar with 1024 MB OOM Limit Marker at 65% width -->
+        <div class="relative w-full h-2 bg-zinc-900 rounded-full overflow-visible mt-2">
+          <div class="w-full h-full rounded-full overflow-hidden">
+            <div id="metric-ram-bar" class="h-full bg-blue-500 transition-all duration-300" style="width: 4%"></div>
+          </div>
+          <!-- 1024 MB OOM Marker Line -->
+          <div
+            title="1024 MB Container OOM Limit"
+            class="absolute -top-1 -bottom-1 w-0.5 bg-rose-500 z-10"
+            style="left: 65%;"
+          ></div>
+        </div>
+      </div>
+
+      <!-- Metric 4: Webhook / Data Integrity -->
+      <div class="rounded-xl bg-surface border border-borderSubtle p-3.5 flex flex-col justify-between">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] font-mono uppercase tracking-wider text-zinc-400">Webhook / Data Integrity</span>
+          <span id="metric-integrity-badge" class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">READY</span>
+        </div>
+        <div id="metric-integrity" class="font-mono text-lg sm:text-xl font-bold text-zinc-200 mt-1.5 truncate">
+          Standby
+        </div>
+        <div id="metric-integrity-sub" class="text-[11px] text-zinc-500 mt-0.5 truncate">Zero data loss guarantee</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- 5. ANIMATED SVG ARCHITECTURE TOPOLOGY CANVAS                          -->
+  <!-- ===================================================================== -->
+  <main class="max-w-7xl mx-auto w-full px-4 sm:px-6 py-2">
+    <div id="diagram-stage" class="relative rounded-2xl bg-surface/70 border border-borderSubtle p-5 sm:p-8 min-h-[390px] flex flex-col justify-center overflow-hidden">
+
+      <!-- SVG Wires Layer -->
+      <svg id="connector-svg" class="absolute inset-0 w-full h-full pointer-events-none z-10"></svg>
+
+      <!-- Flying Glowing Packets Layer -->
+      <div id="packets-layer" class="absolute inset-0 pointer-events-none z-30"></div>
+
+      <!-- 3-Column Topology Grid -->
+      <div class="relative z-20 grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-center">
+
+        <!-- COLUMN 1: CLIENT (3 cols) -->
+        <div class="lg:col-span-3">
+          <div id="node-client" class="node-card rounded-xl bg-canvas border border-borderSubtle p-4 relative">
+            <!-- Floating Status Pill Slot -->
+            <div id="pill-client" class="hidden status-pill absolute -top-3.5 left-1/2 whitespace-nowrap px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold shadow-lg z-30"></div>
+
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-500">Browser / Mobile</span>
+              <span id="badge-client" class="px-2 py-0.5 rounded text-[10px] font-mono bg-zinc-800 text-zinc-400">IDLE</span>
+            </div>
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-200 shrink-0">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <div class="min-w-0">
+                <h3 class="font-semibold text-sm text-white">Client App</h3>
+                <p id="client-sub" class="text-xs text-zinc-400 truncate">Sends Idempotency-Key</p>
+              </div>
+            </div>
+            <div id="client-detail" class="mt-3 pt-2 border-t border-zinc-800/80 text-[11px] font-mono text-zinc-400 truncate">
+              Ready to dispatch HTTP request
+            </div>
+          </div>
+        </div>
+
+        <!-- COLUMN 2: NODE.JS API GATEKEEPER + REDIS + POSTGRES (5 cols) -->
+        <div class="lg:col-span-5 flex flex-col gap-5">
+          
+          <!-- NODE.JS API GATEKEEPER -->
+          <div id="node-api" class="node-card rounded-xl bg-canvas border border-borderSubtle p-4 relative">
+            <div id="pill-api" class="hidden status-pill absolute -top-3.5 left-1/2 whitespace-nowrap px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold shadow-lg z-30"></div>
+
+            <div class="flex items-center justify-between mb-2 gap-2">
+              <span class="text-[10px] font-mono uppercase tracking-wider text-blue-400 truncate">src/server.ts • Port 3000</span>
+              <span id="badge-api-arch" class="shrink-0 px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                Zod + Rate Limit + Idempotency
+              </span>
+            </div>
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2" />
+                </svg>
+              </div>
+              <div class="min-w-0 flex-1">
+                <h3 id="api-title" class="font-semibold text-sm text-white">Node.js API Gatekeeper</h3>
+                <p id="api-sub" class="text-xs text-zinc-400 truncate">Validates input, checks locks &amp; responds &lt;20ms</p>
+              </div>
+            </div>
+            <div id="api-detail" class="mt-3 pt-2 border-t border-zinc-800/80 text-[11px] font-mono text-zinc-400 truncate">
+              Event Loop: Healthy &amp; Non-blocking
+            </div>
+          </div>
+
+          <!-- DATA LAYER: REDIS & POSTGRESQL -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            
+            <!-- REDIS -->
+            <div id="node-redis" class="node-card rounded-xl bg-canvas border border-borderSubtle p-3.5 relative">
+              <div id="pill-redis" class="hidden status-pill absolute -top-3.5 left-1/2 whitespace-nowrap px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold shadow-lg z-30"></div>
+
+              <div class="flex items-center justify-between mb-1.5">
+                <span class="text-[10px] font-mono uppercase tracking-wider text-rose-400">Redis • 6379</span>
+                <span id="badge-redis" class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-rose-500/10 text-rose-300">ACTIVE</span>
+              </div>
+              <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400 shrink-0 font-mono font-bold text-xs">
+                  R
+                </div>
+                <div class="min-w-0">
+                  <h4 class="font-semibold text-xs text-white truncate">Idempotency + Queue</h4>
+                  <p class="text-[11px] text-zinc-400 truncate">Locks &amp; BullMQ Jobs</p>
+                </div>
+              </div>
+              <div id="redis-detail" class="mt-2.5 pt-2 border-t border-zinc-800/80 text-[10px] font-mono text-zinc-400 truncate">
+                Keys: 0 • Queued: 0
+              </div>
+            </div>
+
+            <!-- POSTGRESQL -->
+            <div id="node-postgres" class="node-card rounded-xl bg-canvas border border-borderSubtle p-3.5 relative">
+              <div id="pill-postgres" class="hidden status-pill absolute -top-3.5 left-1/2 whitespace-nowrap px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold shadow-lg z-30"></div>
+
+              <div class="flex items-center justify-between mb-1.5">
+                <span class="text-[10px] font-mono uppercase tracking-wider text-sky-400">PostgreSQL • 5432</span>
+                <span id="badge-postgres" class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-sky-500/10 text-sky-300">ACID</span>
+              </div>
+              <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400 shrink-0 font-mono font-bold text-xs">
+                  PG
+                </div>
+                <div class="min-w-0">
+                  <h4 class="font-semibold text-xs text-white truncate">Primary Database</h4>
+                  <p class="text-[11px] text-zinc-400 truncate">Transactions &amp; Cursor</p>
+                </div>
+              </div>
+              <div id="postgres-detail" class="mt-2.5 pt-2 border-t border-zinc-800/80 text-[10px] font-mono text-zinc-400 truncate">
+                Rows Committed: 0
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- COLUMN 3: BULLMQ WORKER + PARTNER WEBHOOK + DLQ (4 cols) -->
+        <div class="lg:col-span-4 flex flex-col gap-4">
+          
+          <!-- BULLMQ WORKER -->
+          <div id="node-worker" class="node-card rounded-xl bg-canvas border border-borderSubtle p-4 relative">
+            <div id="pill-worker" class="hidden status-pill absolute -top-3.5 left-1/2 whitespace-nowrap px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold shadow-lg z-30"></div>
+
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-[10px] font-mono uppercase tracking-wider text-amber-400">src/worker.ts • Isolated Process</span>
+              <span id="badge-worker" class="px-2 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-300 border border-amber-500/20">LISTENING</span>
+            </div>
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </div>
+              <div class="min-w-0">
+                <h3 class="font-semibold text-sm text-white">BullMQ Worker</h3>
+                <p class="text-xs text-zinc-400 truncate">HMAC signing &amp; exponential backoff</p>
+              </div>
+            </div>
+            <div id="worker-detail" class="mt-3 pt-2 border-t border-zinc-800/80 text-[11px] font-mono text-zinc-400 truncate">
+              Waiting for background jobs...
+            </div>
+          </div>
+
+          <!-- PARTNER WEBHOOK + DEAD-LETTER QUEUE -->
+          <div class="grid grid-cols-1 sm:grid-cols-12 gap-3">
+            
+            <!-- PARTNER WEBHOOK -->
+            <div id="node-partner" class="sm:col-span-7 node-card rounded-xl bg-canvas border border-borderSubtle p-3.5 relative">
+              <div id="pill-partner" class="hidden status-pill absolute -top-3.5 left-1/2 whitespace-nowrap px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold shadow-lg z-30"></div>
+
+              <div class="flex items-center justify-between mb-1.5">
+                <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-400">External HTTP</span>
+                <span id="badge-partner" class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400">200 OK</span>
+              </div>
+              <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-300 shrink-0">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9" />
+                  </svg>
+                </div>
+                <div class="min-w-0">
+                  <h4 class="font-semibold text-xs text-white truncate">Partner Webhook</h4>
+                  <p class="text-[11px] text-zinc-400 truncate">Courier / Billing</p>
+                </div>
+              </div>
+              <div id="partner-detail" class="mt-2 pt-2 border-t border-zinc-800/80 text-[10px] font-mono text-zinc-400 truncate">
+                Delivered: 0
+              </div>
+            </div>
+
+            <!-- DEAD-LETTER QUEUE (DLQ) -->
+            <div id="node-dlq" class="sm:col-span-5 node-card rounded-xl bg-canvas border border-borderSubtle p-3.5 flex flex-col justify-between relative">
+              <div id="pill-dlq" class="hidden status-pill absolute -top-3.5 left-1/2 whitespace-nowrap px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold shadow-lg z-30"></div>
+
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <span class="text-[10px] font-mono font-bold text-rose-400">DLQ</span>
+                  <span id="dlq-count" class="text-xs font-mono font-bold text-zinc-200">0</span>
+                </div>
+                <p class="text-[10px] text-zinc-400 leading-snug">Dead-Letter Queue</p>
+              </div>
+              <div id="dlq-badge" class="mt-2 text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-500 text-center truncate">
+                0 FAILED JOBS
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </main>
+
+  <!-- ===================================================================== -->
+  <!-- 6. BOTTOM SPLIT PANEL: PINO STRUCTURED LOGS + TYPESCRIPT INSPECTOR    -->
+  <!-- ===================================================================== -->
+  <section class="max-w-7xl mx-auto w-full px-4 sm:px-6 pt-2 pb-8">
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+      
+      <!-- LEFT HALF (6 cols): Live Pino Structured Terminal Logs -->
+      <div class="lg:col-span-6 rounded-xl bg-[#070709] border border-borderSubtle overflow-hidden flex flex-col shadow-xl">
+        <div class="px-4 py-2.5 bg-surface border-b border-borderSubtle flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <div class="flex items-center gap-1.5">
+              <span class="w-2.5 h-2.5 rounded-full bg-rose-500/80"></span>
+              <span class="w-2.5 h-2.5 rounded-full bg-amber-500/80"></span>
+              <span class="w-2.5 h-2.5 rounded-full bg-emerald-500/80"></span>
+            </div>
+            <span class="ml-1.5 text-xs font-mono text-zinc-300 font-medium">Pino Structured Logs</span>
+          </div>
+          <button onclick="clearLogs()" class="text-[11px] font-mono text-zinc-500 hover:text-zinc-300 transition cursor-pointer">
+            Clear
+          </button>
+        </div>
+        <div id="terminal-logs" class="p-3.5 h-64 overflow-y-auto font-mono text-[11px] leading-relaxed space-y-1.5 custom-scroll">
+          <!-- Initial boot logs populated on load -->
+        </div>
+      </div>
+
+      <!-- RIGHT HALF (6 cols): Under the Hood (TypeScript) Code Inspector -->
+      <div class="lg:col-span-6 rounded-xl bg-[#070709] border border-borderSubtle overflow-hidden flex flex-col shadow-xl">
+        <div class="px-4 py-2 bg-surface border-b border-borderSubtle flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-mono text-zinc-200 font-semibold">Under the Hood (TypeScript)</span>
+            <span id="code-filename" class="text-[11px] font-mono text-zinc-500">src/modules/orders/order.service.ts</span>
+          </div>
+          <!-- Code Comparison Toggle -->
+          <div class="inline-flex rounded-lg bg-canvas p-0.5 border border-borderSubtle">
+            <button
+              id="code-tab-after"
+              onclick="setCodeInspectorMode('after')"
+              class="px-2 py-1 rounded-md text-[10px] font-mono font-semibold bg-emerald-500/15 text-emerald-300 transition cursor-pointer"
+            >
+              ✅ Production
+            </button>
+            <button
+              id="code-tab-before"
+              onclick="setCodeInspectorMode('before')"
+              class="px-2 py-1 rounded-md text-[10px] font-mono font-semibold text-zinc-400 hover:text-zinc-200 transition cursor-pointer"
+            >
+              ❌ Naive
+            </button>
+          </div>
+        </div>
+        <pre class="p-3.5 h-64 overflow-auto font-mono text-[11px] leading-relaxed text-zinc-300 custom-scroll"><code id="code-viewer"></code></pre>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- INTERACTIVE SIMULATION ENGINE & ARCHITECTURE DATA                     -->
+  <!-- ===================================================================== -->
+  <script>
+    // -------------------------------------------------------------------------
+    // Application State
+    // -------------------------------------------------------------------------
+    let archMode = 'after';      // 'before' | 'after'
+    let codeMode = 'after';      // 'before' | 'after'
+    let currentScenario = 1;     // 1 | 2 | 3 | 4
+    let activeTimers = [];
+    let dlqSavedOrderId = null;  // Stores failed order ID in Scenario 03 AFTER for replay
+
+    const $ = (id) => document.getElementById(id);
+
+    // -------------------------------------------------------------------------
+    // Scenario Metadata & TypeScript Code Snippets
+    // -------------------------------------------------------------------------
+    const SCENARIO_DATA = {
+      1: {
+        name: '01 • Fast Checkout',
+        beforeInsight: {
+          badge: 'FLAW • SYNCHRONOUS COUPLING',
+          tag: 'Blocked Event Loop (4.5s)',
+          text: '<strong>Naive Approach:</strong> The API calls the external partner webhook <em>inside</em> the HTTP request. The customer stares at a spinner for <strong>4.5 seconds</strong> waiting for third-party servers.'
+        },
+        afterInsight: {
+          badge: 'SAFEGUARD • ASYNC OUTBOX + QUEUE',
+          tag: 'Response in 14ms (202 Accepted)',
+          text: '<strong>Production Engine:</strong> API validates via Zod, commits Order + Outbox atomically in Postgres, pushes to BullMQ, and responds in <strong>14ms</strong> while the worker delivers the webhook asynchronously.'
+        },
+        files: {
+          after: 'src/modules/orders/order.service.ts',
+          before: 'src/routes/naive-orders.ts'
+        },
+        code: {
+          after: `// ✅ PRODUCTION: Atomic DB transaction + async BullMQ offload (<20ms)
+export async function createOrder(input: CreateOrderDTO, idemKey: string) {
+  const order = await prisma.$transaction(async (tx) => {
+    const created = await tx.order.create({ data: input });
+    await tx.outboxEvent.create({
+      data: { aggregateId: created.id, type: 'ORDER_CREATED', payload: created }
+    });
+    return created;
+  });
+
+  // Offload slow HTTP webhook delivery to isolated BullMQ worker
+  await webhookQueue.add('deliver-webhook', order, {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 2000 }
+  });
+
+  await redis.set(\`idem:\${idemKey}\`, JSON.stringify(order), 'EX', 86400);
+  return order; // Controller returns 202 Accepted immediately!
+}`,
+          before: `// ❌ NAIVE / AI BOILERPLATE: Blocks user HTTP request on external API
+app.post('/orders', async (req, res) => {
+  // No Zod validation, no transaction, no idempotency
+  const order = await db.orders.create({ data: req.body });
+
+  // User waits 4–10 seconds for slow partner server to respond!
+  const webhookRes = await fetch(req.body.webhookUrl, {
+    method: 'POST',
+    body: JSON.stringify(order)
+  });
+
+  if (!webhookRes.ok) {
+    return res.status(500).json({ error: 'Partner failed!' });
+  }
+  res.json(order);
+});`
+        }
+      },
+      2: {
+        name: '02 • Duplicate Retry',
+        beforeInsight: {
+          badge: 'FLAW • NO IDEMPOTENCY KEY',
+          tag: 'Customer Double-Charged ($300)',
+          text: '<strong>Naive Approach:</strong> Mobile Wi-Fi drops and retries <code>POST /orders</code>. Without an idempotency lock, Express processes both requests and <strong>charges the customer twice</strong>.'
+        },
+        afterInsight: {
+          badge: 'SAFEGUARD • REDIS IDEMPOTENCY LOCK',
+          tag: 'Duplicate Blocked in 4ms',
+          text: '<strong>Production Engine:</strong> Redis checks <code>Idempotency-Key</code> before hitting Postgres. Request #2 hits the cache and immediately returns the original receipt in <strong>4ms</strong> with zero double charge.'
+        },
+        files: {
+          after: 'src/shared/middleware/idempotency.ts',
+          before: 'src/routes/naive-orders.ts'
+        },
+        code: {
+          after: `// ✅ PRODUCTION: Redis Idempotency Middleware prevents double charges
+export async function idempotencyGuard(req: Request, res: Response, next: NextFunction) {
+  const key = req.header('Idempotency-Key');
+  if (!key) return res.status(400).json({ error: 'Idempotency-Key required' });
+
+  const cached = await redis.get(\`idem:\${key}\`);
+  if (cached) {
+    req.log.info({ idemKey: key }, 'Idempotency cache hit — duplicate blocked');
+    return res.status(200).json(JSON.parse(cached));
+  }
+
+  // Acquire atomic NX lock to prevent concurrent race conditions
+  const acquired = await redis.set(\`lock:\${key}\`, '1', 'NX', 'EX', 30);
+  if (!acquired) return res.status(409).json({ error: 'Request in flight' });
+
+  next();
+}`,
+          before: `// ❌ NAIVE / AI BOILERPLATE: Blindly inserts every POST request
+app.post('/orders', async (req, res) => {
+  // If client retries due to timeout, this runs again and charges twice!
+  const payment = await stripe.charges.create({
+    amount: req.body.amount * 100,
+    currency: 'usd'
+  });
+
+  const order = await db.orders.create({
+    data: { ...req.body, paymentId: payment.id }
+  });
+
+  res.status(201).json(order);
+});`
+        }
+      },
+      3: {
+        name: '03 • Partner Outage & DLQ',
+        beforeInsight: {
+          badge: 'FLAW • ZERO RETRY / DATA LOSS',
+          tag: '502 Bad Gateway • Event Lost',
+          text: '<strong>Naive Approach:</strong> Partner server returns HTTP 500. The unguarded <code>fetch()</code> throws an unhandled failure, returning 502 to the customer and <strong>losing the webhook forever</strong>.'
+        },
+        afterInsight: {
+          badge: 'SAFEGUARD • EXPONENTIAL BACKOFF + DLQ',
+          tag: 'Zero Data Loss • Replayable',
+          text: '<strong>Production Engine:</strong> Worker retries 3 times with exponential backoff (<code>2s → 4s → 8s</code>) and isolates exhausted jobs in the <strong>Dead-Letter Queue (DLQ)</strong> so they can be replayed once the partner recovers.'
+        },
+        files: {
+          after: 'src/workers/webhook.worker.ts',
+          before: 'src/routes/naive-orders.ts'
+        },
+        code: {
+          after: `// ✅ PRODUCTION: Isolated BullMQ Worker with HMAC & Exponential Backoff
+export const webhookWorker = new Worker('webhook-deliveries', async (job) => {
+  const signature = crypto
+    .createHmac('sha256', env.WEBHOOK_SECRET)
+    .update(JSON.stringify(job.data))
+    .digest('hex');
+
+  const res = await fetch(job.data.webhookUrl, {
+    method: 'POST',
+    headers: { 'X-Signature-256': signature, 'Content-Type': 'application/json' },
+    body: JSON.stringify(job.data),
+    signal: AbortSignal.timeout(5000)
+  });
+
+  if (!res.ok) throw new Error(\`Partner HTTP \${res.status}\`); // Triggers backoff!
+}, { connection: redis });
+
+// Exhausted jobs remain in BullMQ failed set (DLQ) for safe inspection & replay`,
+          before: `// ❌ NAIVE / AI BOILERPLATE: Single attempt, no timeout, no recovery
+app.post('/orders', async (req, res) => {
+  const order = await db.orders.create({ data: req.body });
+
+  // Partner is down -> throws error -> order event vanishes forever!
+  await fetch(req.body.webhookUrl, {
+    method: 'POST',
+    body: JSON.stringify(order)
+  });
+
+  res.json(order);
+});`
+        }
+      },
+      4: {
+        name: '04 • 500k CSV Stream Export',
+        beforeInsight: {
+          badge: 'FLAW • UNBOUNDED HEAP ALLOCATION',
+          tag: 'OOM Crash (>1024 MB Limit)',
+          text: '<strong>Naive Approach:</strong> <code>SELECT * FROM orders</code> loads all 500,000 rows into a JavaScript array at once, spiking RAM to <strong>1,840 MB</strong> and crashing the Node container (<code>SIGABRT</code>).'
+        },
+        afterInsight: {
+          badge: 'SAFEGUARD • POSTGRES CURSOR + STREAMS',
+          tag: 'Flat ~42 MB RAM Footprint',
+          text: '<strong>Production Engine:</strong> Streams 500-row batches from a PostgreSQL cursor through Node\'s <code>stream.pipeline()</code> directly to the HTTP response, keeping heap RAM flat at <strong>42 MB</strong>.'
+        },
+        files: {
+          after: 'src/modules/orders/export.stream.ts',
+          before: 'src/routes/naive-export.ts'
+        },
+        code: {
+          after: `// ✅ PRODUCTION: Constant-memory PostgreSQL Cursor -> CSV Stream Pipeline
+export async function streamOrdersCsv(req: Request, res: Response) {
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="orders-500k.csv"');
+
+  const client = await pgPool.connect();
+  const cursor = client.query(new Cursor('SELECT id, item, amount, status FROM orders'));
+  const dbReadable = createCursorStream(cursor, { batchSize: 500 });
+  const csvTransform = stringify({ header: true });
+
+  // Backpressure-aware pipeline keeps Node.js heap flat at ~42MB
+  await pipeline(dbReadable, csvTransform, res);
+  client.release();
+}`,
+          before: `// ❌ NAIVE / AI BOILERPLATE: Loads 500,000 rows into V8 Heap at once!
+app.get('/orders/export.csv', async (req, res) => {
+  // Allocates >1.8 GB RAM -> Container killed with JavaScript Heap OOM!
+  const allOrders = await prisma.order.findMany();
+
+  const csv = allOrders
+    .map(o => \`\${o.id},\${o.item},\${o.amount},\${o.status}\`)
+    .join('\\n');
+
+  res.send(csv);
+});`
+        }
+      }
+    };
+
+    // -------------------------------------------------------------------------
+    // Timer & Animation Cleanup Utilities
+    // -------------------------------------------------------------------------
+    function schedule(fn, delay) {
+      const id = setTimeout(fn, delay);
+      activeTimers.push(id);
+      return id;
+    }
+
+    function cancelAllAnimations() {
+      activeTimers.forEach(clearTimeout);
+      activeTimers = [];
+      $('packets-layer').innerHTML = '';
+      clearNodeVisualStates();
+    }
+
+    function clearNodeVisualStates() {
+      const nodes = ['client', 'api', 'redis', 'postgres', 'worker', 'partner', 'dlq'];
+      nodes.forEach((name) => {
+        const el = $(`node-${name}`);
+        if (el) {
+          el.classList.remove(
+            'node-active-blue',
+            'node-active-emerald',
+            'node-active-amber',
+            'node-active-rose',
+            'node-active-purple',
+            'animate-shake'
+          );
+        }
+        const pill = $(`pill-${name}`);
+        if (pill) {
+          pill.classList.add('hidden');
+          pill.textContent = '';
+        }
+      });
+    }
+
+    // -------------------------------------------------------------------------
+    // Visual Helpers: Node Glow, Shake, Floating Pills & Packet Orbs
+    // -------------------------------------------------------------------------
+    function pulseNode(name, glowClass, duration = 1200) {
+      const el = $(`node-${name}`);
+      if (!el) return;
+      el.classList.remove(
+        'node-active-blue',
+        'node-active-emerald',
+        'node-active-amber',
+        'node-active-rose',
+        'node-active-purple'
+      );
+      el.classList.add(glowClass);
+      if (duration > 0) {
+        schedule(() => el.classList.remove(glowClass), duration);
+      }
+    }
+
+    function shakeNode(name) {
+      const el = $(`node-${name}`);
+      if (!el) return;
+      el.classList.remove('animate-shake');
+      void el.offsetWidth; // trigger reflow
+      el.classList.add('animate-shake');
+    }
+
+    function showPill(name, text, variant = 'emerald', duration = 2600) {
+      const pill = $(`pill-${name}`);
+      if (!pill) return;
+
+      const styles = {
+        emerald: 'bg-emerald-500 text-zinc-950 border border-emerald-300',
+        blue: 'bg-blue-500 text-white border border-blue-300',
+        amber: 'bg-amber-400 text-zinc-950 border border-amber-200',
+        rose: 'bg-rose-600 text-white border border-rose-300',
+        purple: 'bg-purple-500 text-white border border-purple-300'
+      };
+
+      pill.className = `status-pill absolute -top-3.5 left-1/2 whitespace-nowrap px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold shadow-lg z-30 ${styles[variant] || styles.emerald}`;
+      pill.textContent = text;
+      pill.classList.remove('hidden');
+
+      if (duration > 0) {
+        schedule(() => pill.classList.add('hidden'), duration);
+      }
+    }
+
+    // Animate glowing packet orb smoothly between two nodes
+    function sendPacket(fromNode, toNode, colorHex, durationMs = 600, label = '') {
+      const stage = $('diagram-stage').getBoundingClientRect();
+      const a = $(`node-${fromNode}`).getBoundingClientRect();
+      const b = $(`node-${toNode}`).getBoundingClientRect();
+
+      const x1 = a.left - stage.left + a.width / 2;
+      const y1 = a.top - stage.top + a.height / 2;
+      const x2 = b.left - stage.left + b.width / 2;
+      const y2 = b.top - stage.top + b.height / 2;
+
+      const orb = document.createElement('div');
+      orb.className = 'packet flex items-center justify-center';
+      orb.style.left = `${x1}px`;
+      orb.style.top = `${y1}px`;
+      orb.style.backgroundColor = colorHex;
+      orb.style.boxShadow = `0 0 14px 3px ${colorHex}`;
+
+      if (label) {
+        const tag = document.createElement('span');
+        tag.textContent = label;
+        tag.className = 'absolute -top-6 whitespace-nowrap px-1.5 py-0.5 rounded bg-zinc-950/95 border border-zinc-700 text-[10px] font-mono text-zinc-100 shadow';
+        orb.appendChild(tag);
+      }
+
+      $('packets-layer').appendChild(orb);
+
+      const t0 = performance.now();
+      function frame(now) {
+        const p = Math.min((now - t0) / durationMs, 1);
+        const ease = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+        orb.style.left = `${x1 + (x2 - x1) * ease}px`;
+        orb.style.top = `${y1 + (y2 - y1) * ease}px`;
+
+        if (p < 1) {
+          requestAnimationFrame(frame);
+        } else {
+          orb.style.opacity = '0';
+          setTimeout(() => orb.remove(), 140);
+        }
+      }
+      requestAnimationFrame(frame);
+    }
+
+    // Draw SVG connector lines dynamically based on mode
+    function drawConnectors() {
+      const svg = $('connector-svg');
+      const stage = $('diagram-stage').getBoundingClientRect();
+      svg.innerHTML = '';
+
+      const pairs = archMode === 'after'
+        ? [
+            ['client', 'api', '#3b82f6', false],
+            ['api', 'redis', '#f43f5e', false],
+            ['api', 'postgres', '#0ea5e9', false],
+            ['redis', 'worker', '#f59e0b', false],
+            ['worker', 'partner', '#10b981', false],
+            ['worker', 'dlq', '#f43f5e', false]
+          ]
+        : [
+            ['client', 'api', '#f43f5e', false],
+            ['api', 'postgres', '#0ea5e9', false],
+            ['api', 'partner', '#f59e0b', false],
+            ['api', 'redis', '#52525b', true],
+            ['redis', 'worker', '#52525b', true],
+            ['worker', 'dlq', '#52525b', true]
+          ];
+
+      pairs.forEach(([from, to, color, dimmed]) => {
+        const a = $(`node-${from}`).getBoundingClientRect();
+        const b = $(`node-${to}`).getBoundingClientRect();
+
+        const x1 = a.left - stage.left + a.width / 2;
+        const y1 = a.top - stage.top + a.height / 2;
+        const x2 = b.left - stage.left + b.width / 2;
+        const y2 = b.top - stage.top + b.height / 2;
+
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', x1);
+        line.setAttribute('y1', y1);
+        line.setAttribute('x2', x2);
+        line.setAttribute('y2', y2);
+        line.setAttribute('stroke', color);
+        line.setAttribute('stroke-opacity', dimmed ? '0.14' : '0.35');
+        line.setAttribute('stroke-width', dimmed ? '1.5' : '2');
+        if (!dimmed) line.setAttribute('class', 'flow-line');
+        svg.appendChild(line);
+      });
+    }
+
+    window.addEventListener('resize', drawConnectors);
+
+    // -------------------------------------------------------------------------
+    // Structured Pino Logger
+    // -------------------------------------------------------------------------
+    function logPino(source, msg, level = 'info', meta = null) {
+      const box = $('terminal-logs');
+      const time = new Date().toTimeString().split(' ')[0];
+
+      const tagColor = {
+        CLIENT: 'text-zinc-300',
+        API: 'text-blue-400',
+        REDIS: 'text-rose-400',
+        POSTGRES: 'text-sky-400',
+        WORKER: 'text-amber-400',
+        PARTNER: 'text-emerald-400',
+        STREAM: 'text-purple-400',
+        DLQ: 'text-rose-500 font-bold'
+      }[source] || 'text-zinc-400';
+
+      const msgColor = {
+        info: 'text-zinc-300',
+        success: 'text-emerald-400',
+        warn: 'text-amber-300',
+        error: 'text-rose-400'
+      }[level] || 'text-zinc-300';
+
+      const metaStr = meta ? ` <span class="text-zinc-500">${JSON.stringify(meta)}</span>` : '';
+
+      const row = document.createElement('div');
+      row.innerHTML = `<span class="text-zinc-600">[${time}]</span> <span class="${tagColor}">[${source}]</span> <span class="${msgColor}">${msg}</span>${metaStr}`;
+      box.appendChild(row);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function clearLogs() {
+      $('terminal-logs').innerHTML = '';
+    }
+
+    // -------------------------------------------------------------------------
+    // Telemetry Card Updaters
+    // -------------------------------------------------------------------------
+    function setTelemetry({ latency, latencySub, latencyColor, orders, ordersSub, ordersColor, ramMb, ramLabel, ramBarColor, integrity, integritySub, integrityColor }) {
+      if (latency !== undefined) {
+        $('metric-latency').textContent = latency;
+        $('metric-latency').className = `font-mono text-lg sm:text-xl font-bold mt-1.5 ${latencyColor || 'text-emerald-400'}`;
+      }
+      if (latencySub !== undefined) $('metric-latency-sub').textContent = latencySub;
+
+      if (orders !== undefined) {
+        $('metric-orders').textContent = orders;
+        $('metric-orders').className = `font-mono text-lg sm:text-xl font-bold mt-1.5 ${ordersColor || 'text-white'}`;
+      }
+      if (ordersSub !== undefined) $('metric-orders-sub').textContent = ordersSub;
+
+      if (ramMb !== undefined) {
+        $('metric-ram').textContent = ramLabel || `${ramMb} MB`;
+        const pct = Math.min(Math.round((ramMb / 1575) * 100), 100);
+        $('metric-ram-pct').textContent = `${Math.round((ramMb / 1024) * 100)}% of limit`;
+        $('metric-ram-bar').style.width = `${Math.max(pct, 3)}%`;
+
+        if (ramMb > 1024) {
+          $('metric-ram').className = 'font-mono text-lg sm:text-xl font-bold mt-1.5 text-rose-500';
+          $('metric-ram-bar').className = 'h-full bg-rose-500 transition-all duration-300';
+        } else if (ramMb > 400) {
+          $('metric-ram').className = 'font-mono text-lg sm:text-xl font-bold mt-1.5 text-amber-400';
+          $('metric-ram-bar').className = 'h-full bg-amber-500 transition-all duration-300';
+        } else {
+          $('metric-ram').className = 'font-mono text-lg sm:text-xl font-bold mt-1.5 text-blue-400';
+          $('metric-ram-bar').className = `h-full ${ramBarColor || 'bg-blue-500'} transition-all duration-300`;
+        }
+      }
+
+      if (integrity !== undefined) {
+        $('metric-integrity').textContent = integrity;
+        $('metric-integrity').className = `font-mono text-lg sm:text-xl font-bold mt-1.5 truncate ${integrityColor || 'text-zinc-200'}`;
+      }
+      if (integritySub !== undefined) $('metric-integrity-sub').textContent = integritySub;
+    }
+
+    function setReplayButtonEnabled(enabled) {
+      const btn = $('btn-replay-dlq');
+      if (enabled) {
+        btn.disabled = false;
+        btn.className = 'px-3.5 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/50 text-amber-300 font-semibold text-xs sm:text-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-lg shadow-amber-500/10';
+      } else {
+        btn.disabled = true;
+        btn.className = 'px-3.5 py-2.5 rounded-xl bg-surface border border-borderSubtle text-zinc-500 font-semibold text-xs sm:text-sm transition-all flex items-center justify-center gap-1.5 opacity-50 cursor-not-allowed';
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Mode & Scenario UI Synchronization
+    // -------------------------------------------------------------------------
+    function setArchitectureMode(mode) {
+      archMode = mode;
+      codeMode = mode;
+      cancelAllAnimations();
+      dlqSavedOrderId = null;
+      setReplayButtonEnabled(false);
+
+      const btnBefore = $('mode-btn-before');
+      const btnAfter = $('mode-btn-after');
+      const runBtn = $('btn-run');
+      const brandIcon = $('brand-icon');
+
+      if (mode === 'before') {
+        btnBefore.className = 'flex-1 sm:flex-initial px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 flex items-center justify-center gap-1.5 cursor-pointer bg-rose-500/20 text-rose-300 border border-rose-500/50 shadow-sm';
+        btnAfter.className = 'flex-1 sm:flex-initial px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 flex items-center justify-center gap-1.5 cursor-pointer text-zinc-400 hover:text-zinc-200';
+        runBtn.className = 'flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-400 text-white font-semibold text-xs sm:text-sm shadow-lg shadow-rose-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer';
+        brandIcon.className = 'w-9 h-9 rounded-lg bg-gradient-to-br from-rose-500 to-orange-600 flex items-center justify-center shadow-lg shadow-rose-500/20 transition-all duration-300';
+
+        // Bypass Redis, Worker, DLQ visually in BEFORE mode
+        ['redis', 'worker', 'dlq'].forEach((n) => $(`node-${n}`).classList.add('node-bypassed'));
+        $('badge-redis').textContent = 'BYPASSED';
+        $('badge-worker').textContent = 'NONE';
+        $('badge-api-arch').textContent = 'Raw Express Route (No Guardrails)';
+        $('badge-api-arch').className = 'shrink-0 px-2 py-0.5 rounded text-[10px] font-mono bg-rose-500/15 text-rose-300 border border-rose-500/30';
+        $('api-title').textContent = 'Express API (Monolithic Route)';
+        $('api-sub').textContent = 'Blocks on external calls; no idempotency or streams';
+        $('client-sub').textContent = 'Raw POST without Idempotency-Key';
+      } else {
+        btnAfter.className = 'flex-1 sm:flex-initial px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 flex items-center justify-center gap-1.5 cursor-pointer bg-emerald-500/15 text-emerald-300 border border-emerald-500/40 shadow-sm';
+        btnBefore.className = 'flex-1 sm:flex-initial px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 flex items-center justify-center gap-1.5 cursor-pointer text-zinc-400 hover:text-zinc-200';
+        runBtn.className = 'flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-xs sm:text-sm shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer';
+        brandIcon.className = 'w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center shadow-lg shadow-emerald-500/20 transition-all duration-300';
+
+        ['redis', 'worker', 'dlq'].forEach((n) => $(`node-${n}`).classList.remove('node-bypassed'));
+        $('badge-redis').textContent = 'ACTIVE';
+        $('badge-worker').textContent = 'LISTENING';
+        $('badge-api-arch').textContent = 'Zod + Rate Limit + Idempotency';
+        $('badge-api-arch').className = 'shrink-0 px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-300 border border-emerald-500/30';
+        $('api-title').textContent = 'Node.js API Gatekeeper';
+        $('api-sub').textContent = 'Validates input, checks locks & responds <20ms';
+        $('client-sub').textContent = 'Sends Idempotency-Key header';
+      }
+
+      updateScenarioTabsUI();
+      updateInsightBanner();
+      updateCodeInspector();
+      resetNodeReadouts();
+      drawConnectors();
+    }
+
+    function selectScenario(num) {
+      currentScenario = num;
+      cancelAllAnimations();
+      dlqSavedOrderId = null;
+      setReplayButtonEnabled(false);
+
+      updateScenarioTabsUI();
+      updateInsightBanner();
+      updateCodeInspector();
+      resetNodeReadouts();
+    }
+
+    function updateScenarioTabsUI() {
+      for (let i = 1; i <= 4; i++) {
+        const tab = $(`tab-scen-${i}`);
+        const label = tab.querySelector('div:first-child');
+        if (i === currentScenario) {
+          const activeBorder = archMode === 'after' ? 'border-emerald-500/60' : 'border-rose-500/60';
+          const activeLabel = archMode === 'after' ? 'text-emerald-400' : 'text-rose-400';
+          tab.className = `scenario-tab text-left px-3.5 py-2.5 rounded-xl bg-surfaceElevated border ${activeBorder} text-white transition-all cursor-pointer shadow-md`;
+          label.className = `text-[10px] font-mono ${activeLabel} font-semibold`;
+        } else {
+          tab.className = 'scenario-tab text-left px-3.5 py-2.5 rounded-xl bg-surface border border-borderSubtle hover:border-zinc-600 text-zinc-300 transition-all cursor-pointer';
+          label.className = 'text-[10px] font-mono text-zinc-500 font-semibold';
+        }
+      }
+    }
+
+    function updateInsightBanner() {
+      const data = SCENARIO_DATA[currentScenario];
+      const banner = $('insight-banner');
+      const badge = $('insight-badge');
+      const text = $('insight-text');
+      const tag = $('insight-tag');
+
+      if (archMode === 'before') {
+        banner.className = 'rounded-xl bg-rose-950/25 border border-rose-500/35 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 transition-colors duration-300';
+        badge.className = 'shrink-0 px-2.5 py-1 rounded-md text-[11px] font-mono font-semibold bg-rose-500/15 text-rose-300 border border-rose-500/35';
+        badge.textContent = data.beforeInsight.badge;
+        text.innerHTML = data.beforeInsight.text;
+        tag.className = 'shrink-0 self-start sm:self-center text-[11px] font-mono text-rose-400 font-semibold';
+        tag.textContent = data.beforeInsight.tag;
+      } else {
+        banner.className = 'rounded-xl bg-emerald-950/25 border border-emerald-500/30 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 transition-colors duration-300';
+        badge.className = 'shrink-0 px-2.5 py-1 rounded-md text-[11px] font-mono font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30';
+        badge.textContent = data.afterInsight.badge;
+        text.innerHTML = data.afterInsight.text;
+        tag.className = 'shrink-0 self-start sm:self-center text-[11px] font-mono text-emerald-400 font-semibold';
+        tag.textContent = data.afterInsight.tag;
+      }
+    }
+
+    function setCodeInspectorMode(mode) {
+      codeMode = mode;
+      updateCodeInspector();
+    }
+
+    function updateCodeInspector() {
+      const data = SCENARIO_DATA[currentScenario];
+      $('code-filename').textContent = data.files[codeMode];
+      $('code-viewer').textContent = data.code[codeMode];
+
+      if (codeMode === 'after') {
+        $('code-tab-after').className = 'px-2 py-1 rounded-md text-[10px] font-mono font-semibold bg-emerald-500/15 text-emerald-300 transition cursor-pointer';
+        $('code-tab-before').className = 'px-2 py-1 rounded-md text-[10px] font-mono font-semibold text-zinc-400 hover:text-zinc-200 transition cursor-pointer';
+      } else {
+        $('code-tab-before').className = 'px-2 py-1 rounded-md text-[10px] font-mono font-semibold bg-rose-500/15 text-rose-300 transition cursor-pointer';
+        $('code-tab-after').className = 'px-2 py-1 rounded-md text-[10px] font-mono font-semibold text-zinc-400 hover:text-zinc-200 transition cursor-pointer';
+      }
+    }
+
+    function resetNodeReadouts() {
+      $('badge-client').textContent = 'IDLE';
+      $('client-detail').textContent = 'Ready to dispatch HTTP request';
+      $('api-detail').textContent = archMode === 'after' ? 'Event Loop: Healthy & Non-blocking' : 'Event Loop: Single-threaded synchronous handler';
+      $('redis-detail').textContent = archMode === 'after' ? 'Keys: 0 • Queued: 0' : 'Not configured in naive build';
+      $('postgres-detail').textContent = 'Rows Committed: 0';
+      $('worker-detail').textContent = archMode === 'after' ? 'Waiting for background jobs...' : 'No separate worker process';
+      $('badge-partner').textContent = '200 OK';
+      $('badge-partner').className = 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400';
+      $('partner-detail').textContent = 'Delivered: 0';
+      $('dlq-count').textContent = '0';
+      $('dlq-badge').textContent = '0 FAILED JOBS';
+      $('dlq-badge').className = 'mt-2 text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-500 text-center truncate';
+
+      setTelemetry({
+        latency: archMode === 'after' ? '14ms' : '—',
+        latencySub: archMode === 'after' ? 'Target SLA < 50ms' : 'Synchronous blocking I/O',
+        latencyColor: archMode === 'after' ? 'text-emerald-400' : 'text-zinc-400',
+        orders: '0 Orders ($0)',
+        ordersSub: 'PostgreSQL transactional state',
+        ordersColor: 'text-white',
+        ramMb: 42,
+        ramLabel: '42 MB',
+        ramBarColor: 'bg-blue-500',
+        integrity: 'Standby',
+        integritySub: 'Click "Run Scenario" to simulate',
+        integrityColor: 'text-zinc-200'
+      });
+    }
+
+    function resetSimulator() {
+      cancelAllAnimations();
+      dlqSavedOrderId = null;
+      setReplayButtonEnabled(false);
+      resetNodeReadouts();
+      clearLogs();
+      logPino('API', 'Simulator reset. Ready for next scenario.', 'info', { mode: archMode.toUpperCase() });
+    }
+
+    // -------------------------------------------------------------------------
+    // Master Scenario Runner
+    // -------------------------------------------------------------------------
+    function runCurrentScenario() {
+      cancelAllAnimations();
+      dlqSavedOrderId = null;
+      setReplayButtonEnabled(false);
+      resetNodeReadouts();
+
+      if (currentScenario === 1) {
+        archMode === 'after' ? runScenario1After() : runScenario1Before();
+      } else if (currentScenario === 2) {
+        archMode === 'after' ? runScenario2After() : runScenario2Before();
+      } else if (currentScenario === 3) {
+        archMode === 'after' ? runScenario3After() : runScenario3Before();
+      } else if (currentScenario === 4) {
+        archMode === 'after' ? runScenario4After() : runScenario4Before();
+      }
+    }
+
+    // =========================================================================
+    // SCENARIO 01: FAST CHECKOUT
+    // =========================================================================
+    function runScenario1Before() {
+      const orderId = 'ord_4102';
+      logPino('CLIENT', 'POST /orders { item: "Mechanical Keyboard", amount: 150 }');
+      pulseNode('client', 'node-active-blue', 900);
+      $('badge-client').textContent = 'WAITING...';
+      $('client-detail').textContent = 'Staring at loading spinner...';
+      sendPacket('client', 'api', '#f43f5e', 600, 'POST /orders');
+
+      schedule(() => {
+        pulseNode('api', 'node-active-amber', 3000);
+        $('api-detail').textContent = 'INSERT order -> awaiting partner fetch...';
+        logPino('API', 'Inserted order into DB, now blocking HTTP thread on partner webhook...', 'warn', { orderId });
+        sendPacket('api', 'postgres', '#0ea5e9', 450, 'INSERT');
+      }, 650);
+
+      schedule(() => {
+        pulseNode('postgres', 'node-active-blue', 700);
+        $('postgres-detail').textContent = `Rows Committed: 1 (${orderId})`;
+        sendPacket('api', 'partner', '#f59e0b', 1100, 'Blocking fetch (4.5s)');
+      }, 1200);
+
+      schedule(() => {
+        pulseNode('partner', 'node-active-emerald', 800);
+        $('partner-detail').textContent = 'Delivered: 1 (Slow)';
+        logPino('PARTNER', 'Partner responded 200 OK after 4,520ms delay', 'warn');
+        sendPacket('partner', 'api', '#f59e0b', 600, '200 OK (4.5s)');
+      }, 2400);
+
+      schedule(() => {
+        showPill('api', 'Blocked 4,520ms!', 'amber', 3200);
+        $('api-detail').textContent = 'Finally responding to client after 4,520ms';
+        sendPacket('api', 'client', '#f59e0b', 550, '200 OK (4,520ms)');
+      }, 3050);
+
+      schedule(() => {
+        pulseNode('client', 'node-active-amber', 1200);
+        $('badge-client').textContent = '200 OK (SLOW)';
+        $('client-detail').textContent = 'Finished after 4.52s spinner';
+        setTelemetry({
+          latency: '4,520ms',
+          latencySub: '45x slower than target SLA',
+          latencyColor: 'text-amber-400',
+          orders: '1 Order ($150)',
+          ordersSub: 'Committed without outbox pattern',
+          ordersColor: 'text-white',
+          ramMb: 68,
+          ramLabel: '68 MB',
+          integrity: 'Delivered (Blocking)',
+          integritySub: 'High latency risk under traffic spikes',
+          integrityColor: 'text-amber-400'
+        });
+        logPino('API', 'Request completed in 4520ms', 'warn', { orderId, latencyMs: 4520 });
+      }, 3650);
+    }
+
+    function runScenario1After() {
+      const orderId = 'ord_9041';
+      const idemKey = 'pay_77219';
+
+      logPino('CLIENT', 'POST /orders { item: "Mechanical Keyboard", amount: 150 }', 'info', { idemKey });
+      pulseNode('client', 'node-active-blue', 800);
+      $('badge-client').textContent = 'POST /orders';
+      $('client-detail').textContent = `Idempotency-Key: ${idemKey}`;
+      sendPacket('client', 'api', '#3b82f6', 550, 'POST /orders');
+
+      schedule(() => {
+        pulseNode('api', 'node-active-blue', 1500);
+        $('api-detail').textContent = 'Zod valid ✓ Checking Redis lock...';
+        logPino('API', 'Schema validated. Checking idempotency key in Redis', 'info', { idemKey });
+        sendPacket('api', 'redis', '#f43f5e', 420, 'GET idem');
+      }, 600);
+
+      schedule(() => {
+        pulseNode('redis', 'node-active-rose', 650);
+        $('redis-detail').textContent = `Lock acquired: ${idemKey}`;
+        sendPacket('api', 'postgres', '#0ea5e9', 480, 'ACID TX');
+      }, 1050);
+
+      schedule(() => {
+        pulseNode('postgres', 'node-active-blue', 850);
+        $('postgres-detail').textContent = `Rows Committed: 1 (${orderId} + Outbox)`;
+        logPino('POSTGRES', 'COMMIT atomic transaction (orders + outbox_events)', 'success', { orderId });
+        sendPacket('api', 'redis', '#f59e0b', 450, 'Enqueue Job');
+      }, 1600);
+
+      schedule(() => {
+        pulseNode('redis', 'node-active-amber', 850);
+        $('redis-detail').textContent = `Keys: 1 • Queued: 1`;
+        showPill('api', '202 Accepted (14ms)', 'emerald', 3200);
+        $('api-detail').textContent = 'Returned 202 Accepted in 14ms!';
+        logPino('API', 'Order accepted & queued; returning 202 immediately', 'success', { orderId, latencyMs: 14 });
+        sendPacket('api', 'client', '#10b981', 500, '202 Accepted (14ms)');
+      }, 2100);
+
+      schedule(() => {
+        pulseNode('client', 'node-active-emerald', 1100);
+        $('badge-client').textContent = '202 ACCEPTED';
+        $('client-detail').textContent = `Confirmed ${orderId} in 14ms!`;
+        setTelemetry({
+          latency: '14ms',
+          latencySub: 'HTTP 202 Accepted (Non-blocking)',
+          latencyColor: 'text-emerald-400',
+          orders: '1 Order ($150)',
+          ordersSub: 'Order + Outbox committed atomically',
+          ordersColor: 'text-emerald-400',
+          ramMb: 42,
+          ramLabel: '42 MB',
+          integrity: 'Queued -> Delivering',
+          integritySub: 'Offloaded to BullMQ worker',
+          integrityColor: 'text-blue-400'
+        });
+
+        // Worker picks up background job
+        sendPacket('redis', 'worker', '#f59e0b', 550, 'Pop Job');
+      }, 2650);
+
+      schedule(() => {
+        pulseNode('worker', 'node-active-amber', 1100);
+        $('badge-worker').textContent = 'SIGNING HMAC';
+        $('worker-detail').textContent = `Delivering ${orderId} with X-Signature-256`;
+        logPino('WORKER', 'Picked up job; signed payload with HMAC-SHA256', 'info', { orderId, attempt: 1 });
+        sendPacket('worker', 'partner', '#10b981', 550, 'POST Webhook');
+      }, 3250);
+
+      schedule(() => {
+        pulseNode('partner', 'node-active-emerald', 1200);
+        $('partner-detail').textContent = 'Delivered: 1 (200 OK)';
+        $('badge-worker').textContent = 'LISTENING';
+        $('worker-detail').textContent = `Delivered ${orderId} ✓`;
+        $('redis-detail').textContent = 'Keys: 1 • Queued: 0';
+        setTelemetry({
+          integrity: 'Delivered (Async) ✓',
+          integritySub: 'HMAC verified by partner',
+          integrityColor: 'text-emerald-400'
+        });
+        logPino('PARTNER', 'Webhook acknowledged HTTP 200 OK', 'success', { orderId });
+      }, 3850);
+    }
+
+    // =========================================================================
+    // SCENARIO 02: DUPLICATE NETWORK RETRY
+    // =========================================================================
+    function runScenario2Before() {
+      logPino('CLIENT', 'Request #1 -> POST /orders { amount: 150 }');
+      pulseNode('client', 'node-active-blue', 700);
+      $('badge-client').textContent = 'REQ #1';
+      sendPacket('client', 'api', '#3b82f6', 500, 'Req #1');
+
+      schedule(() => {
+        pulseNode('api', 'node-active-blue', 700);
+        sendPacket('api', 'postgres', '#0ea5e9', 450, 'INSERT #1');
+      }, 550);
+
+      schedule(() => {
+        pulseNode('postgres', 'node-active-blue', 700);
+        $('postgres-detail').textContent = 'Rows Committed: 1 ($150)';
+        logPino('POSTGRES', 'INSERT order #1 ($150)', 'info');
+      }, 1050);
+
+      // Duplicate retry arrives
+      schedule(() => {
+        pulseNode('client', 'node-active-amber', 800);
+        $('badge-client').textContent = 'RETRY #2';
+        $('client-detail').textContent = 'Wi-Fi glitched — retrying same POST!';
+        logPino('CLIENT', 'Network timeout retry! Request #2 -> POST /orders { amount: 150 }', 'warn');
+        sendPacket('client', 'api', '#f43f5e', 500, 'Duplicate Req #2');
+      }, 1550);
+
+      schedule(() => {
+        pulseNode('api', 'node-active-rose', 1100);
+        $('api-detail').textContent = 'No idempotency check — executing again!';
+        sendPacket('api', 'postgres', '#f43f5e', 450, 'INSERT #2 (!)');
+      }, 2100);
+
+      schedule(() => {
+        pulseNode('postgres', 'node-active-rose', 2000);
+        shakeNode('postgres');
+        shakeNode('client');
+        showPill('postgres', 'DOUBLE CHARGED! ($300)', 'rose', 3500);
+        showPill('client', '2x Charges Created!', 'rose', 3500);
+        $('postgres-detail').textContent = 'Rows Committed: 2 ($300 DUPLICATE!)';
+        $('badge-client').textContent = 'CHARGED TWICE';
+        $('client-detail').textContent = 'Customer billed $300 instead of $150!';
+
+        setTelemetry({
+          latency: '310ms',
+          latencySub: '2 separate DB writes executed',
+          latencyColor: 'text-amber-400',
+          orders: '2 Orders ($300 — DOUBLE CHARGED)',
+          ordersSub: 'Duplicate order created on retry!',
+          ordersColor: 'text-rose-500',
+          ramMb: 64,
+          ramLabel: '64 MB',
+          integrity: 'Corrupted (Duplicate)',
+          integritySub: 'Requires manual refund intervention',
+          integrityColor: 'text-rose-500'
+        });
+
+        logPino('POSTGRES', 'CRITICAL: Duplicate order committed! Customer charged $300 total.', 'error', { ordersCount: 2, totalUsd: 300 });
+      }, 2600);
+    }
+
+    function runScenario2After() {
+      const idemKey = 'pay_88421';
+      const orderId = 'ord_8842';
+
+      logPino('CLIENT', 'Request #1 -> POST /orders', 'info', { idemKey, amount: 150 });
+      pulseNode('client', 'node-active-blue', 700);
+      $('badge-client').textContent = 'REQ #1';
+      $('client-detail').textContent = `Key: ${idemKey}`;
+      sendPacket('client', 'api', '#3b82f6', 480, 'Req #1');
+
+      schedule(() => {
+        pulseNode('api', 'node-active-blue', 800);
+        sendPacket('api', 'postgres', '#0ea5e9', 420, 'INSERT');
+        sendPacket('api', 'redis', '#f43f5e', 420, 'SET idem');
+      }, 520);
+
+      schedule(() => {
+        pulseNode('postgres', 'node-active-blue', 750);
+        pulseNode('redis', 'node-active-rose', 750);
+        $('postgres-detail').textContent = `Rows Committed: 1 (${orderId})`;
+        $('redis-detail').textContent = `Cached: idem:${idemKey}`;
+        setTelemetry({
+          orders: '1 Order ($150)',
+          ordersSub: 'Committed once in PostgreSQL',
+          ordersColor: 'text-emerald-400'
+        });
+        logPino('REDIS', `Cached response for ${idemKey} (TTL 24h)`, 'success');
+      }, 1000);
+
+      // Duplicate retry arrives
+      schedule(() => {
+        pulseNode('client', 'node-active-amber', 800);
+        $('badge-client').textContent = 'RETRY #2';
+        $('client-detail').textContent = `Wi-Fi retry with same key: ${idemKey}`;
+        logPino('CLIENT', 'Network retry! Request #2 -> POST /orders', 'warn', { idemKey });
+        sendPacket('client', 'api', '#f59e0b', 480, 'Duplicate Req #2');
+      }, 1650);
+
+      schedule(() => {
+        pulseNode('api', 'node-active-emerald', 1300);
+        $('api-detail').textContent = `Checking Redis for idem:${idemKey}...`;
+        sendPacket('api', 'redis', '#10b981', 420, 'GET idem');
+      }, 2200);
+
+      schedule(() => {
+        pulseNode('redis', 'node-active-emerald', 1500);
+        showPill('redis', 'CACHE HIT: Blocked Duplicate', 'emerald', 3400);
+        showPill('api', 'Returned Cached 200 (4ms)', 'emerald', 3400);
+        $('badge-redis').textContent = 'CACHE HIT';
+        $('redis-detail').textContent = `Blocked duplicate ${idemKey}!`;
+        $('api-detail').textContent = 'Postgres untouched — returned cached order';
+
+        logPino('REDIS', 'Idempotency cache HIT — duplicate charge prevented!', 'success', { idemKey, orderId });
+        sendPacket('api', 'client', '#10b981', 480, 'Cached 200 OK (4ms)');
+      }, 2680);
+
+      schedule(() => {
+        pulseNode('client', 'node-active-emerald', 1200);
+        $('badge-client').textContent = 'SAFE (1 CHARGE)';
+        $('client-detail').textContent = `Received original ${orderId} ($150)`;
+        setTelemetry({
+          latency: '4ms',
+          latencySub: 'Served directly from Redis cache',
+          latencyColor: 'text-emerald-400',
+          orders: '1 Order ($150)',
+          ordersSub: 'Zero duplicate writes in PostgreSQL',
+          ordersColor: 'text-emerald-400',
+          ramMb: 43,
+          ramLabel: '43 MB',
+          integrity: 'Deduplicated ✓',
+          integritySub: 'Idempotency key protected customer',
+          integrityColor: 'text-emerald-400'
+        });
+      }, 3200);
+    }
+
+    // =========================================================================
+    // SCENARIO 03: PARTNER OUTAGE & DLQ (+ INTERACTIVE DLQ REPLAY)
+    // =========================================================================
+    function runScenario3Before() {
+      $('badge-partner').textContent = 'DOWN • 500';
+      $('badge-partner').className = 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-rose-500/20 text-rose-400 border border-rose-500/30';
+      $('partner-detail').textContent = '500 Internal Server Error';
+      logPino('PARTNER', 'Partner webhook server is DOWN (HTTP 500)', 'error');
+
+      pulseNode('client', 'node-active-blue', 700);
+      $('badge-client').textContent = 'POST /orders';
+      sendPacket('client', 'api', '#3b82f6', 500, 'POST /orders');
+
+      schedule(() => {
+        pulseNode('api', 'node-active-amber', 900);
+        $('api-detail').textContent = 'Calling partner webhook inline...';
+        sendPacket('api', 'partner', '#f59e0b', 500, 'POST Webhook');
+      }, 550);
+
+      schedule(() => {
+        pulseNode('partner', 'node-active-rose', 1100);
+        shakeNode('partner');
+        showPill('partner', 'HTTP 500 CRASH', 'rose', 3200);
+        sendPacket('partner', 'api', '#f43f5e', 450, '500 Error');
+      }, 1100);
+
+      schedule(() => {
+        pulseNode('api', 'node-active-rose', 1400);
+        shakeNode('api');
+        showPill('api', '502 Bad Gateway — Lost!', 'rose', 3400);
+        $('api-detail').textContent = 'Unhandled partner failure — aborting!';
+        logPino('API', 'ERROR: Partner webhook returned 500. Order failed & event lost!', 'error');
+        sendPacket('api', 'client', '#f43f5e', 480, '502 Bad Gateway');
+      }, 1600);
+
+      schedule(() => {
+        pulseNode('client', 'node-active-rose', 1200);
+        shakeNode('client');
+        $('badge-client').textContent = '502 FAILED';
+        $('client-detail').textContent = 'Checkout crashed due to partner outage';
+        setTelemetry({
+          latency: '502 ERR',
+          latencySub: 'Cascading failure from partner outage',
+          latencyColor: 'text-rose-500',
+          orders: '0 Orders (Aborted)',
+          ordersSub: 'Customer checkout failed',
+          ordersColor: 'text-rose-500',
+          ramMb: 61,
+          ramLabel: '61 MB',
+          integrity: 'Lost Forever 💥',
+          integritySub: 'No retry queue or DLQ configured',
+          integrityColor: 'text-rose-500'
+        });
+      }, 2150);
+    }
+
+    function runScenario3After() {
+      const orderId = 'ord_6630';
+      $('badge-partner').textContent = 'DOWN • 500';
+      $('badge-partner').className = 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-rose-500/20 text-rose-400 border border-rose-500/30';
+      $('partner-detail').textContent = '500 Internal Server Error';
+      logPino('PARTNER', 'Partner webhook server experiencing outage (HTTP 500)', 'error');
+
+      // API still succeeds fast!
+      pulseNode('client', 'node-active-blue', 700);
+      $('badge-client').textContent = 'POST /orders';
+      sendPacket('client', 'api', '#3b82f6', 450, 'POST /orders');
+
+      schedule(() => {
+        pulseNode('api', 'node-active-emerald', 900);
+        $('api-detail').textContent = 'Committed to Postgres & queued in Redis!';
+        sendPacket('api', 'postgres', '#0ea5e9', 400, 'COMMIT');
+        sendPacket('api', 'redis', '#f59e0b', 400, 'ENQUEUE');
+      }, 500);
+
+      schedule(() => {
+        pulseNode('postgres', 'node-active-blue', 700);
+        $('postgres-detail').textContent = `Rows Committed: 1 (${orderId})`;
+        showPill('api', '202 Accepted (15ms)', 'emerald', 2400);
+        sendPacket('api', 'client', '#10b981', 420, '202 Accepted');
+
+        setTelemetry({
+          latency: '15ms',
+          latencySub: 'API insulated from partner outage',
+          latencyColor: 'text-emerald-400',
+          orders: '1 Order ($150)',
+          ordersSub: 'Safely persisted in PostgreSQL',
+          ordersColor: 'text-emerald-400',
+          ramMb: 45,
+          ramLabel: '45 MB',
+          integrity: 'Retrying (Backoff)...',
+          integritySub: 'Worker handling partner outage',
+          integrityColor: 'text-amber-400'
+        });
+      }, 950);
+
+      schedule(() => {
+        pulseNode('client', 'node-active-emerald', 800);
+        $('badge-client').textContent = '202 OK';
+        $('client-detail').textContent = `Order ${orderId} confirmed!`;
+      }, 1400);
+
+      // Worker Retry 1/3
+      schedule(() => {
+        pulseNode('worker', 'node-active-amber', 800);
+        $('badge-worker').textContent = 'RETRY 1/3';
+        $('worker-detail').textContent = `Attempt 1/3 for ${orderId}...`;
+        logPino('WORKER', 'Attempt 1/3 -> POST webhook', 'info', { orderId });
+        sendPacket('worker', 'partner', '#f59e0b', 450, 'Attempt 1');
+      }, 1600);
+
+      schedule(() => {
+        pulseNode('partner', 'node-active-rose', 600);
+        showPill('worker', 'Retry 1/3 failed (2s backoff)', 'amber', 1000);
+        logPino('WORKER', 'Attempt 1 failed (500). Waiting 2s exponential backoff...', 'warn', { nextDelayMs: 2000 });
+        sendPacket('partner', 'worker', '#f43f5e', 400, '500');
+      }, 2100);
+
+      // Worker Retry 2/3
+      schedule(() => {
+        pulseNode('worker', 'node-active-amber', 800);
+        $('badge-worker').textContent = 'RETRY 2/3';
+        $('worker-detail').textContent = `Attempt 2/3 (after 2s backoff)...`;
+        logPino('WORKER', 'Attempt 2/3 -> POST webhook', 'info', { orderId });
+        sendPacket('worker', 'partner', '#f59e0b', 450, 'Attempt 2');
+      }, 2800);
+
+      schedule(() => {
+        pulseNode('partner', 'node-active-rose', 600);
+        showPill('worker', 'Retry 2/3 (4s backoff)', 'amber', 1000);
+        logPino('WORKER', 'Attempt 2 failed (500). Waiting 4s exponential backoff...', 'warn', { nextDelayMs: 4000 });
+        sendPacket('partner', 'worker', '#f43f5e', 400, '500');
+      }, 3300);
+
+      // Worker Retry 3/3
+      schedule(() => {
+        pulseNode('worker', 'node-active-amber', 800);
+        $('badge-worker').textContent = 'RETRY 3/3';
+        $('worker-detail').textContent = `Final attempt 3/3 (after 4s backoff)...`;
+        logPino('WORKER', 'Attempt 3/3 -> POST webhook', 'info', { orderId });
+        sendPacket('worker', 'partner', '#f59e0b', 450, 'Attempt 3');
+      }, 4000);
+
+      schedule(() => {
+        pulseNode('partner', 'node-active-rose', 600);
+        logPino('WORKER', 'Max retries (3) exhausted. Moving job to Dead-Letter Queue (DLQ)', 'error', { orderId });
+        sendPacket('worker', 'dlq', '#f43f5e', 550, 'Move to DLQ');
+      }, 4500);
+
+      // Lands safely in DLQ -> Enable Replay Button!
+      schedule(() => {
+        dlqSavedOrderId = orderId;
+        pulseNode('dlq', 'node-active-rose', 2500);
+        showPill('dlq', 'Saved in DLQ (0 Loss)', 'amber', 4000);
+        $('dlq-count').textContent = '1';
+        $('dlq-badge').textContent = '1 JOB • REPLAYABLE';
+        $('dlq-badge').className = 'mt-2 text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-center truncate';
+        $('badge-worker').textContent = 'LISTENING';
+        $('worker-detail').textContent = `Isolated ${orderId} in DLQ — ready to replay`;
+
+        setTelemetry({
+          integrity: 'Saved in DLQ (0 Loss)',
+          integritySub: 'Click "↻ Replay DLQ Job" to recover!',
+          integrityColor: 'text-amber-400'
+        });
+
+        setReplayButtonEnabled(true);
+        logPino('DLQ', `Job ${orderId} preserved in DLQ. Click "↻ Replay DLQ Job" once partner recovers.`, 'warn', { orderId });
+      }, 5100);
+    }
+
+    // Interactive DLQ Replay Action!
+    function replayDlqJob() {
+      if (!dlqSavedOrderId) return;
+      const orderId = dlqSavedOrderId;
+      dlqSavedOrderId = null;
+      setReplayButtonEnabled(false);
+
+      // Partner server recovers!
+      $('badge-partner').textContent = 'ONLINE • 200';
+      $('badge-partner').className = 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/15 text-emerald-400 border border-emerald-500/30';
+      $('partner-detail').textContent = 'Endpoint recovered (200 OK)';
+      logPino('PARTNER', 'Partner webhook endpoint is back ONLINE (HTTP 200)', 'success');
+
+      // Move job from DLQ -> Worker
+      pulseNode('dlq', 'node-active-amber', 800);
+      $('dlq-count').textContent = '0';
+      $('dlq-badge').textContent = 'REPLAYING...';
+      logPino('DLQ', `Replaying saved job ${orderId} back into active worker queue...`, 'info', { orderId });
+      sendPacket('dlq', 'worker', '#f59e0b', 550, `Replay ${orderId}`);
+
+      schedule(() => {
+        pulseNode('worker', 'node-active-amber', 900);
+        $('badge-worker').textContent = 'REPLAYING';
+        $('worker-detail').textContent = `Delivering replayed ${orderId}...`;
+        sendPacket('worker', 'partner', '#10b981', 550, 'POST Webhook');
+      }, 600);
+
+      schedule(() => {
+        pulseNode('partner', 'node-active-emerald', 1500);
+        showPill('partner', '200 OK — Delivered!', 'emerald', 3200);
+        $('partner-detail').textContent = `Delivered: 1 (${orderId})`;
+        $('dlq-badge').textContent = '0 FAILED JOBS';
+        $('dlq-badge').className = 'mt-2 text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-500 text-center truncate';
+        $('badge-worker').textContent = 'LISTENING';
+        $('worker-detail').textContent = `DLQ replay succeeded for ${orderId} ✓`;
+
+        setTelemetry({
+          integrity: 'Delivered via DLQ ✓',
+          integritySub: '100% recovery after partner outage',
+          integrityColor: 'text-emerald-400'
+        });
+
+        logPino('PARTNER', `Replayed webhook delivered successfully for ${orderId}!`, 'success', { orderId, recovered: true });
+      }, 1200);
+    }
+
+    // =========================================================================
+    // SCENARIO 04: 500K CSV STREAM EXPORT
+    // =========================================================================
+    function runScenario4Before() {
+      logPino('CLIENT', 'GET /orders/export.csv (Requesting 500,000 rows)');
+      pulseNode('client', 'node-active-purple', 700);
+      $('badge-client').textContent = 'GET /export.csv';
+      $('client-detail').textContent = 'Waiting for 500k CSV download...';
+      sendPacket('client', 'api', '#a855f7', 480, 'GET /export.csv');
+
+      schedule(() => {
+        pulseNode('api', 'node-active-amber', 2200);
+        pulseNode('postgres', 'node-active-rose', 1200);
+        $('postgres-detail').textContent = 'SELECT * FROM orders (500,000 rows)';
+        $('api-detail').textContent = 'Loading all 500,000 rows into JS Array...';
+        logPino('POSTGRES', 'Executing unpaginated SELECT * FROM orders (500,000 rows)', 'warn');
+        sendPacket('api', 'postgres', '#f43f5e', 450, 'SELECT * (500k)');
+      }, 520);
+
+      schedule(() => {
+        sendPacket('postgres', 'api', '#f43f5e', 650, '500k Rows Blob');
+        setTelemetry({
+          ramMb: 680,
+          ramLabel: '680 MB (Spiking)',
+          integrity: 'Allocating Heap...',
+          integritySub: 'V8 Garbage Collector stalling',
+          integrityColor: 'text-amber-400'
+        });
+        logPino('API', 'Heap memory spiking rapidly: 680 MB / 1024 MB limit...', 'warn', { heapMb: 680 });
+      }, 1050);
+
+      schedule(() => {
+        pulseNode('api', 'node-active-rose', 3500);
+        shakeNode('api');
+        shakeNode('client');
+        showPill('api', 'OOM CRASH! (1,840 MB)', 'rose', 4500);
+        showPill('client', '502 Connection Reset', 'rose', 4500);
+
+        $('api-detail').textContent = 'FATAL: JavaScript heap out of memory (SIGABRT)';
+        $('badge-client').textContent = '502 RESET';
+        $('client-detail').textContent = 'Server crashed mid-export!';
+
+        setTelemetry({
+          latency: 'CRASHED',
+          latencySub: 'Container killed by OOMKiller (SIGABRT)',
+          latencyColor: 'text-rose-500',
+          orders: '500,000 Rows',
+          ordersSub: 'Loaded into RAM simultaneously',
+          ordersColor: 'text-amber-400',
+          ramMb: 1840,
+          ramLabel: '1,840 MB 💥 OOM',
+          integrity: 'Stream Aborted 💥',
+          integritySub: 'All active users disconnected!',
+          integrityColor: 'text-rose-500'
+        });
+
+        logPino('API', 'FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory', 'error', { heapMb: 1840, limitMb: 1024 });
+      }, 1800);
+    }
+
+    function runScenario4After() {
+      logPino('CLIENT', 'GET /orders/export.csv (Requesting 500,000 rows)');
+      pulseNode('client', 'node-active-purple', 700);
+      $('badge-client').textContent = 'STREAMING CSV';
+      $('client-detail').textContent = 'Receiving chunked CSV stream...';
+      sendPacket('client', 'api', '#a855f7', 450, 'GET /export.csv');
+
+      schedule(() => {
+        pulseNode('api', 'node-active-purple', 3200);
+        pulseNode('postgres', 'node-active-blue', 3200);
+        $('postgres-detail').textContent = 'Server Cursor: 500 rows/batch';
+        $('api-detail').textContent = 'stream.pipeline(cursor -> csv -> res)';
+        showPill('api', 'Streaming (42 MB RAM)', 'purple', 3200);
+
+        setTelemetry({
+          latency: 'TTFB 18ms',
+          latencySub: 'First CSV chunk sent in 18ms',
+          latencyColor: 'text-emerald-400',
+          orders: '500,000 Rows',
+          ordersSub: 'Read via PostgreSQL server cursor',
+          ordersColor: 'text-sky-400',
+          ramMb: 44,
+          ramLabel: '44 MB (Flat)',
+          ramBarColor: 'bg-emerald-500',
+          integrity: 'Streaming Chunks...',
+          integritySub: 'Backpressure-aware Node pipeline',
+          integrityColor: 'text-purple-400'
+        });
+
+        logPino('POSTGRES', 'Opened server cursor for 500,000 orders (batchSize: 500)', 'info');
+        logPino('STREAM', 'Piping DB cursor -> CSV transform -> HTTP response', 'info', { heapMb: 44 });
+      }, 500);
+
+      // 4 rhythmic stream batches
+      [650, 1250, 1850, 2450].forEach((t, i) => {
+        schedule(() => {
+          sendPacket('postgres', 'api', '#0ea5e9', 420, `Batch ${i + 1}/4`);
+          schedule(() => {
+            sendPacket('api', 'client', '#a855f7', 420, `125k rows`);
+          }, 220);
+        }, t);
+      });
+
+      schedule(() => {
+        pulseNode('client', 'node-active-emerald', 1300);
+        showPill('client', '500k CSV Saved ✓', 'emerald', 3200);
+        $('badge-client').textContent = 'CSV DOWNLOADED';
+        $('client-detail').textContent = '500,000 rows exported cleanly!';
+        $('postgres-detail').textContent = 'Cursor closed cleanly';
+        $('api-detail').textContent = 'Pipeline finished — Peak RAM: 44 MB';
+
+        setTelemetry({
+          ramMb: 42,
+          ramLabel: '42 MB (Flat)',
+          ramBarColor: 'bg-emerald-500',
+          integrity: '500k Exported ✓',
+          integritySub: 'Zero memory spike (Peak 44 MB)',
+          integrityColor: 'text-emerald-400'
+        });
+
+        logPino('STREAM', 'Completed 500,000-row CSV stream export with constant memory footprint', 'success', { rowsExported: 500000, peakHeapMb: 44 });
+      }, 3350);
+    }
+
+    // -------------------------------------------------------------------------
+    // Initial Boot
+    // -------------------------------------------------------------------------
+    window.addEventListener('load', () => {
+      setArchitectureMode('after');
+      selectScenario(1);
+      logPino('API', 'Server listening on http://localhost:3000', 'info', { env: 'production', node: 'v22.x' });
+      logPino('WORKER', 'BullMQ consumer connected to Redis (queue: webhook-deliveries)', 'info');
+      setTimeout(drawConnectors, 120);
+    });
+  </script>
+</body>
+</html>
