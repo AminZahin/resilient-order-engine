@@ -8,7 +8,7 @@
 
 ## Why I Built This
 
-Scaffolding CRUD endpoints is easy—especially with modern AI tools. Real backend work starts when things break in production: flaky mobile networks, double-clicks, sudden traffic spikes, and heavy exports that blow past memory limits.
+Scaffolding CRUD endpoints is easy. Especially with modern AI tools. Real backend work starts when things break in production: flaky mobile networks, double clicks, sudden traffic spikes, and heavy exports that blow past memory limits.
 
 I built this project to put core Node.js and reliability patterns in one place:
 
