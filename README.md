@@ -1,6 +1,7 @@
 # Resilient Order & Webhook Processing Engine
 
 > **Interactive Simulator (Naive vs. Resilient):**  
+> [![Interactive Architecture Simulator Preview](docs/preview.png)](https://aminzahin.github.io/resilient-order-engine/)
 > **[Launch Live Demo → resilient-order-engine](https://aminzahin.github.io/resilient-order-engine/)**  
 > *Switch between a straightforward synchronous setup and this engine to see how it handles duplicate payment retries, flaky third-party webhooks, and 500k-row CSV exports.*
 
