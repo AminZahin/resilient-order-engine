@@ -1,19 +1,22 @@
 {
   "name": "resilient-order-engine",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Resilient Order & Webhook Processing Engine demonstrating production Node.js architecture",
+  "main": "dist/server.js",
+  "type": "module",
   "directories": {
     "doc": "docs",
     "test": "tests"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev:api": "tsx watch src/server.ts",
+    "dev:worker": "tsx watch src/worker.ts",
+    "build": "tsc",
+    "test": "vitest run"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
     "bullmq": "^6.7.8",
     "dotenv": "^18.0.10",
