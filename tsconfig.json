@@ -5,12 +5,12 @@
     "moduleResolution": "NodeNext",
     "rootDir": "./src",
     "outDir": "./dist",
+    "sourceMap": true,
+    "noUncheckedIndexedAccess": true,
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "noUncheckedIndexedAccess": true,
-    "sourceMap": true
+    "forceConsistentCasingInFileNames": true
   },
   "include": ["src/**/*"]
 }

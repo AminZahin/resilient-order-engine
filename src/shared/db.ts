@@ -4,7 +4,7 @@ import { logger } from './logger.js';
 
 export const pool = new Pool({
   connectionString: env.DATABASE_URL,
-  max: 20, // Maximum concurrent connections
+  max: 20,
   idleTimeoutMillis: 30000,
 });
 
